@@ -10,6 +10,55 @@ Accepted at USENIX Security 2023
 This code is implemented in Python 3.9 using PyTorch-Geometric 2.1.0 and PyTorch 1.12.1.
 Refer to [requiresments.txt](./requirements.txt) to see the full list of dependencies.
 
+(Lorenzo): I suggest to use Python 3.10. You can create a conda environment and install all the requirments + the `autodp` library
+
+```bash
+# Create and activate the conda env
+conda create -n gap
+conda activate gap
+
+# Instaall Python 3.10
+conda uninstall python
+conda install python=3.10
+
+#Install all the requirements
+pip install -r requirements.txt
+pip install git+https://github.com/yuxiangw/autodp
+```
+
+Also, once signed-up on WandB use the command `wandb login` and paste your private API key.
+
+
+(Lorenzo - Windows): On windows I had some problems with various compabilities. This is what I did:
+
+```bash
+# Create and activate the conda env
+conda create -n gap
+conda activate gap
+
+# Instaall Python 3.10
+conda uninstall python
+conda install python=3.10
+
+pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu117
+python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())" 
+# Should print a 1.13.1 and True if you have a Nvidia GPU
+
+# For Windows with Python 3.10 and CUDA 11.7
+pip install https://data.pyg.org/whl/torch-1.13.0%2Bcu117/torch_scatter-2.1.0%2Bpt113cu117-cp310-cp310-win_amd64.whl
+pip install https://data.pyg.org/whl/torch-1.13.0%2Bcu117/torch_sparse-0.6.16%2Bpt113cu117-cp310-cp310-win_amd64.whl
+pip install https://data.pyg.org/whl/torch-1.13.0%2Bcu117/torch_cluster-1.6.0%2Bpt113cu117-cp310-cp310-win_amd64.whl
+pip install https://data.pyg.org/whl/torch-1.13.0%2Bcu117/torch_spline_conv-1.2.1%2Bpt113cu117-cp310-cp310-win_amd64.whl
+python -c "import torch_sparse; import torch_scatter; print('Success!')"
+# Should print 'Success!' at the end
+
+#Install all the requirements
+pip install -r requirements.txt
+pip install git+https://github.com/yuxiangw/autodp
+
+
+```
+
 ## Notes
 1. The code includes a custom C++ operator for faster edge sampling required for the node-level DP methods. PyTorch will automatically build the C++ code at runtime, but you need to have a C++ compiler installed (usually it is handled automatically if you use conda).
 
