@@ -38,7 +38,7 @@ conda activate gap
 
 # Instaall Python 3.10
 conda uninstall python
-conda install python=3.10
+pip install git+https://github.com/yuxiangw/autodpconda install python=3.10
 
 pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 --extra-index-url https://download.pytorch.org/whl/cu117
 python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())" 
@@ -55,8 +55,25 @@ python -c "import torch_sparse; import torch_scatter; print('Success!')"
 #Install all the requirements
 pip install -r requirements.txt
 pip install git+https://github.com/yuxiangw/autodp
+```
+
+lorenzo (linux) follow the following instruciton to set up everything for Linux
+
+```bash
+pip install torch==1.13.1+cu117 torchvision==0.14.1+cu117 torchaudio==0.13.1 --index-url https://download.pytorch.org/whl/cu117
+
+# Verify PyTorch installation
+python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())"
 
 
+
+pip install torch-scatter==2.1.1 -f https://data.pyg.org/whl/torch-1.13.1+cu117.html
+pip install torch-sparse==0.6.17 -f https://data.pyg.org/whl/torch-1.13.1+cu117.html
+pip install torch-cluster==1.6.1 -f https://data.pyg.org/whl/torch-1.13.1+cu117.html
+pip install torch-spline-conv==1.2.2 -f https://data.pyg.org/whl/torch-1.13.1+cu117.html
+
+# Install PyTorch Geometric
+pip install torch-geometric==2.1.0
 ```
 
 ## Notes

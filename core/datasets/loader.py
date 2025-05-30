@@ -39,13 +39,19 @@ class DatasetLoader:
 
     def __init__(self,
                  dataset:    Annotated[str, ArgInfo(help='name of the dataset', choices=supported_datasets)] = 'facebook',
-                 data_dir:   Annotated[str, ArgInfo(help='directory to store the dataset')] = './datasets',
+                 data_dir:   Annotated[str, ArgInfo(help='directory to store the dataset')] = '/scratch/lsibi/datasets',
                  ):
 
         self.name = dataset
         self.data_dir = data_dir
 
     def load(self, verbose=False) -> Data:
+        dataset_path = os.path.join(self.data_dir, self.name)
+
+        if os.path.exists(dataset_path) and os.listdir(dataset_path):
+            if verbose:
+                print(f"Using existing dataset from {dataset_path}")
+
         data = self.supported_datasets[self.name](root=os.path.join(self.data_dir, self.name))[0]
         data = Compose([RemoveSelfLoops(), RemoveIsolatedNodes(), ToSparseTensor()])(data)
 

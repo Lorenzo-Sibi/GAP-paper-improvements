@@ -36,7 +36,7 @@ def run(seed:    Annotated[int,   ArgInfo(help='initial random seed')] = 12345,
     num_classes = data_initial.y.max().item() + 1
     config = dict(**kwargs, seed=seed, repeats=repeats)
     logger_args = strip_kwargs(Logger.setup, kwargs)
-    logger = Logger.setup(enabled=False, config=config, **logger_args)
+    logger = Logger.setup(enabled=True, config=config, **logger_args)
 
     ### initiallize method ###
     Method = supported_methods[kwargs['method']]
@@ -76,10 +76,30 @@ def run(seed:    Annotated[int,   ArgInfo(help='initial random seed')] = 12345,
         summary[metric + '_mean'] = np.mean(values)
         summary[metric + '_std'] = np.std(values)
         summary[metric + '_ci'] = confidence_interval(values, size=1000, ci=95, seed=seed)
-        logger.log_summary(summary)
 
-    logger.finish()
-    print()
+    table_summary = Table(title="Training Results", show_header=True)
+    table_summary.add_column("Metric", style="cyan")
+    table_summary.add_column("Mean", style="green")
+    table_summary.add_column("Std", style="yellow")
+    table_summary.add_column("CI", style="magenta")
+
+    groups = [
+        ("Epoch", "epoch"),
+        ("Training", "train/acc", "train/loss"),
+        ("Validation", "val/acc", "val/loss"),
+        ("Testing", "test/acc"),
+        ("Duration", "duration")
+    ]
+
+    for group_name, *metrics in groups:
+        for metric in metrics:
+            display_name = f"{group_name} {metric.split('/')[-1].capitalize()}" if '/' in metric else group_name
+            mean = f"{summary[f'{metric}_mean']:.2f}"
+            std = f"{summary[f'{metric}_std']:.2f}"
+            ci = f"{summary[f'{metric}_ci']:.2f}"
+            table_summary.add_row(display_name, mean, std, ci)
+
+    console.info(table_summary)
 
 
 def main():

@@ -121,6 +121,7 @@ build.ninja
 
 .DS_Store
 /datasets
+/logs
 /wandb
 /jobs
 /output
@@ -129,3 +130,5 @@ build.ninja
 TODO
 /__test*
 /figs
+*.err
+*.out

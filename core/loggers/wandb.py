@@ -19,8 +19,8 @@ class WandbLogger(LoggerBase):
     @property
     def experiment(self) -> Run:
         if not hasattr(self, '_experiment'):
-            os.environ["WANDB_SILENT"] = "true"
-            settings = wandb.Settings(start_method="fork")
+            os.environ["WANDB_SILENT"] = "false"
+            settings = wandb.Settings(start_method="thread")
             os.makedirs(self.output_dir, exist_ok=True)
 
             self._experiment = wandb.init(

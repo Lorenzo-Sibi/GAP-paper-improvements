@@ -1,3 +1,4 @@
+import os
 from typing import Annotated
 from core import console
 from core import globals
@@ -29,7 +30,11 @@ class Logger:
         logger:   Annotated[str,  ArgInfo(help='select logger type', choices=supported_loggers)] = 'csv',
         **kwargs: Annotated[dict, ArgInfo(help='additional kwargs for the underlying logger', bases=[LoggerBase])],
         ) -> LoggerBase:
-        
+
+        if 'SLURM_JOB_ID' in os.environ:
+            logger = 'wandb'
+            kwargs['enabled'] = True
+            console.debug(f'SLURM detected: wandb logger enabled for project {kwargs.get("project", "N/A")}')
         if globals['debug']:
             logger = 'wandb'
             kwargs['enabled'] = True
