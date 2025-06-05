@@ -5,208 +5,149 @@ from typing import Callable, Optional
 from torch import Tensor
 from torch_sparse import SparseTensor, matmul
 from core.models import MLP
+from core.methods.node.gap.learnable_weight import *
 
 
 class LearnableAggregation(nn.Module):
     """
-    Learnable aggregation function based on MLP that can replace standard aggregation.
+    Generalized learnable aggregation module supporting multiple weight function strategies.
     
-    This module learns how to combine node features and neighbor features instead of 
-    using simple sum/mean aggregation.
+    Implements: AGG_f(A, X)_v = Σ_{u: A_vu=1} f(X_v, X_u) · X_u
+    
+    where f is any learnable weight function.
     """
-    def __init__(self, 
-                 input_dim: int,
-                 hidden_dim: int = 64,
-                 num_layers: int = 2,
-                 activation_fn: Callable[[Tensor], Tensor] = torch.relu_,
-                 dropout: float = 0.0,
-                 batch_norm: bool = True,
-                 aggregation_type: str = 'concat'  # 'concat', 'sum', 'attention'
-                 ):
-        """
-        Args:
-            input_dim: Dimension of input features
-            hidden_dim: Hidden dimension for MLP
-            num_layers: Number of MLP layers
-            activation_fn: Activation function
-            dropout: Dropout rate
-            batch_norm: Whether to use batch normalization
-            aggregation_type: How to combine self and neighbor features
-        """
-        super().__init__()
-        
-        self.input_dim = input_dim
-        self.hidden_dim = hidden_dim
-        self.aggregation_type = aggregation_type
-        
-        # Define input dimension based on aggregation type
-        if aggregation_type == 'concat':
-            mlp_input_dim = input_dim * 2  # self + neighbor features
-        elif aggregation_type == 'sum':
-            mlp_input_dim = input_dim
-        elif aggregation_type == 'attention':
-            raise NotImplementedError("Attention aggregation is not implemented yet.")
-        else:
-            raise ValueError(f"Unknown aggregation_type: {aggregation_type}")
-        
-        # Main aggregation MLP
-        # TODO: change output_dim (remember constraind between [a, b] - we use just sigmoid so [0, 1])
-        self.aggregation_mlp = nn.Sequential(
-            MLP(
-            output_dim=input_dim,  # Output same dimension as input
-            hidden_dim=hidden_dim,
-            num_layers=num_layers,
-            dropout=dropout,
-            activation_fn=activation_fn,
-            batch_norm=batch_norm,
-            plain_last=True),
-            nn.Sigmoid()  # Ensure output is in [0, 1] range
-        )
-        
-        # Set input dimension for the MLP
-        self.aggregation_mlp.layers[0] = nn.Linear(mlp_input_dim, hidden_dim)
-        
-    def forward(self, 
-                self_features: Tensor, 
-                neighbor_features: Tensor,
-                adj_t: Optional[SparseTensor] = None) -> Tensor:
-        """
-        Forward pass for learnable aggregation.
-        
-        Args:
-            self_features: Features of the nodes themselves [N, D]
-            neighbor_features: Aggregated features from neighbors [N, D]
-            adj_t: Adjacency matrix (used for attention if needed)
-            
-        Returns:
-            Aggregated features [N, D]
-        """
-        if self.aggregation_type == 'concat':
-            # Concatenate self and neighbor features
-            combined_features = torch.cat([self_features, neighbor_features], dim=-1)
-            return self.aggregation_mlp(combined_features)
-            
-        elif self.aggregation_type == 'sum':
-            # Sum self and neighbor features, then apply MLP
-            combined_features = self_features + neighbor_features
-            return self.aggregation_mlp(combined_features)
-            
-        elif self.aggregation_type == 'attention':
-            raise NotImplementedError("Attention aggregation is not implemented yet.")
-            # Use attention to weight the combination
-            attention_input = torch.cat([self_features, neighbor_features], dim=-1)
-            attention_weights = torch.sigmoid(self.attention_mlp(attention_input))
-            
-            # Weighted combination
-            combined_features = attention_weights * self_features + (1 - attention_weights) * neighbor_features
-            return self.aggregation_mlp(combined_features)
-        
-    def reset_parameters(self):
-        """Reset all parameters."""
-        def _reset(m):
-            if hasattr(m, 'reset_parameters'):
-                m.reset_parameters()
-        self.aggregation_mlp.apply(_reset)
-        if hasattr(self, 'attention_mlp'):
-            raise NotImplementedError("Attention aggregation is not implemented yet.")
-            self.attention_mlp.reset_parameters()
-
-
-class LearnableAggregationLayer(nn.Module):
-    """
-    A complete layer that performs message passing with learnable aggregation.
-    This can be used as a drop-in replacement for standard GNN layers.
-    """
+    
+    # Registry of available weight functions
+    WEIGHT_FUNCTIONS = {
+        'mlp': MLPWeightFunction,
+        'attention': AttentionWeightFunction,
+    }
     
     def __init__(self,
                  input_dim: int,
-                 output_dim: int,
-                 hidden_dim: int = 64,
-                 aggregation_layers: int = 2,
-                 projection_layers: int = 1,
-                 activation_fn: Callable[[Tensor], Tensor] = torch.relu_,
-                 dropout: float = 0.0,
-                 batch_norm: bool = True,
-                 aggregation_type: str = 'concat',
-                 normalize: bool = True):
+                 weight_function: Union[str, LearnableWeightFunction] = 'mlp',
+                 weight_range: tuple = (0.0, 1.0),
+                 use_efficient_computation: bool = True,
+                 chunk_size: int = 10000,
+                 **weight_function_kwargs):
         """
         Args:
-            input_dim: Input feature dimension
-            output_dim: Output feature dimension
-            hidden_dim: Hidden dimension for aggregation MLP
-            aggregation_layers: Number of layers in aggregation MLP
-            projection_layers: Number of layers in final projection MLP
-            activation_fn: Activation function
-            dropout: Dropout rate
-            batch_norm: Whether to use batch normalization
-            aggregation_type: Type of aggregation ('concat', 'sum', 'attention')
-            normalize: Whether to normalize features
+            input_dim: Dimension of node features
+            weight_function: Either string name or LearnableWeightFunction instance
+            weight_range: Range [a, b] for output weights
+            use_efficient_computation: Whether to use chunked computation for large graphs
+            chunk_size: Size of chunks for efficient computation
+            **weight_function_kwargs: Arguments passed to weight function constructor
         """
         super().__init__()
         
         self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.normalize = normalize
+        self.weight_range = weight_range
+        self.use_efficient_computation = use_efficient_computation
+        self.chunk_size = chunk_size
         
-        # Learnable aggregation function
-        self.learnable_aggregation = LearnableAggregation(
-            input_dim=input_dim,
-            hidden_dim=hidden_dim,
-            num_layers=aggregation_layers,
-            activation_fn=activation_fn,
-            dropout=dropout,
-            batch_norm=batch_norm,
-            aggregation_type=aggregation_type
-        )
-        
-        # Final projection to output dimension
-        if projection_layers > 0:
-            self.projection = MLP(
-                output_dim=output_dim,
-                hidden_dim=hidden_dim,
-                num_layers=projection_layers,
-                dropout=dropout,
-                activation_fn=activation_fn,
-                batch_norm=batch_norm,
-                plain_last=True
+        # Initialize weight function
+        if isinstance(weight_function, str):
+            if weight_function not in self.WEIGHT_FUNCTIONS:
+                raise ValueError(f"Unknown weight function: {weight_function}. "
+                               f"Available: {list(self.WEIGHT_FUNCTIONS.keys())}")
+            
+            WeightFunctionClass = self.WEIGHT_FUNCTIONS[weight_function]
+            self.weight_function = WeightFunctionClass(
+                input_dim=input_dim,
+                weight_range=weight_range,
+                **weight_function_kwargs
             )
-            self.projection.layers[0] = nn.Linear(input_dim, hidden_dim if projection_layers > 1 else output_dim)
+            self.weight_function_name = weight_function
         else:
-            self.projection = nn.Linear(input_dim, output_dim)
-    
+            self.weight_function = weight_function
+            self.weight_function_name = weight_function.__class__.__name__
+        
     def forward(self, x: Tensor, adj_t: SparseTensor) -> Tensor:
         """
-        Forward pass of the learnable aggregation layer.
+        Forward pass of learnable aggregation.
         
         Args:
             x: Node features [N, input_dim]
-            adj_t: Sparse adjacency tensor
+            adj_t: Sparse adjacency matrix [N, N]
             
         Returns:
-            Updated node features [N, output_dim]
+            Aggregated features [N, input_dim]
         """
-        # Normalize input features if required
-        if self.normalize:
-            x = F.normalize(x, p=2, dim=-1)
+        if self.use_efficient_computation and adj_t.nnz() > self.chunk_size:
+            return self._forward_efficient(x, adj_t)
+        else:
+            return self._forward_direct(x, adj_t)
+    
+    def _forward_direct(self, x: Tensor, adj_t: SparseTensor) -> Tensor:
+        """Direct computation for smaller graphs."""
+        row, col, _ = adj_t.coo()
         
-        # Standard neighbor aggregation (sum of neighbors)
-        neighbor_features = matmul(adj_t, x)
+        # Get node features for each edge
+        x_v = x[row]  # Target nodes
+        x_u = x[col]  # Source nodes
         
-        # Apply learnable aggregation
-        aggregated_features = self.learnable_aggregation(x, neighbor_features, adj_t)
+        # Compute weights using the learnable function
+        weights = self.weight_function(x_v, x_u)  # [num_edges, 1]
         
-        # Project to output dimension
-        output = self.projection(aggregated_features)
+        # Apply weights to source features
+        weighted_features = weights * x_u  # [num_edges, input_dim]
         
-        return output
+        # Aggregate for each target node
+        aggregated = torch.zeros_like(x)
+        aggregated.scatter_add_(0, row.unsqueeze(1).expand(-1, x.size(1)), weighted_features)
+        
+        return aggregated
+    
+    def _forward_efficient(self, x: Tensor, adj_t: SparseTensor) -> Tensor:
+        """Efficient chunked computation for larger graphs."""
+        N, D = x.shape
+        aggregated = torch.zeros_like(x)
+        
+        row, col, _ = adj_t.coo()
+        
+        # Process edges in chunks
+        for i in range(0, len(row), self.chunk_size):
+            end_idx = min(i + self.chunk_size, len(row))
+            
+            row_chunk = row[i:end_idx]
+            col_chunk = col[i:end_idx]
+            
+            x_v_chunk = x[row_chunk]
+            x_u_chunk = x[col_chunk]
+            
+            # Compute weights for this chunk
+            weights_chunk = self.weight_function(x_v_chunk, x_u_chunk)
+            weighted_features_chunk = weights_chunk * x_u_chunk
+            
+            # Aggregate this chunk
+            aggregated.scatter_add_(0, row_chunk.unsqueeze(1).expand(-1, D), weighted_features_chunk)
+        
+        return aggregated
     
     def reset_parameters(self):
-        """Reset all parameters."""
-        self.learnable_aggregation.reset_parameters()
-        if hasattr(self.projection, 'reset_parameters'):
-            self.projection.reset_parameters()
-        else:
-            # For simple Linear layer
-            nn.init.xavier_uniform_(self.projection.weight)
-            if self.projection.bias is not None:
-                nn.init.zeros_(self.projection.bias)
+        """Reset parameters of the weight function."""
+        if hasattr(self.weight_function, 'reset_parameters'):
+            self.weight_function.reset_parameters()
+    
+    def get_weight_function_info(self) -> Dict[str, Any]:
+        """Get information about the current weight function."""
+        return {
+            'name': self.weight_function_name,
+            'input_dim': self.input_dim,
+            'weight_range': self.weight_range,
+            'parameters': sum(p.numel() for p in self.weight_function.parameters()),
+            'trainable_parameters': sum(p.numel() for p in self.weight_function.parameters() if p.requires_grad)
+        }
+    
+    @classmethod
+    def create_weight_function(cls, 
+                              function_name: str, 
+                              input_dim: int, 
+                              **kwargs) -> LearnableWeightFunction:
+        """Factory method to create weight functions."""
+        if function_name not in cls.WEIGHT_FUNCTIONS:
+            raise ValueError(f"Unknown weight function: {function_name}")
+        
+        WeightFunctionClass = cls.WEIGHT_FUNCTIONS[function_name]
+        return WeightFunctionClass(input_dim=input_dim, **kwargs)

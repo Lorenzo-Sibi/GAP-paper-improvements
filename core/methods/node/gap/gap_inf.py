@@ -138,7 +138,7 @@ class GAP (NodeClassification):
 
     def compute_aggregations(self, data: Data) -> Data:
         with console.status('computing aggregations'):
-            x = F.normalize(data.x, p=2, dim=-1)
+            x = F.normalize(data.x, p=2, dim=-1) # This is the hop 0 (the one without aggregation and perturbation, just normalization)
             x_list = [x]
 
             for _ in range(self.hops):

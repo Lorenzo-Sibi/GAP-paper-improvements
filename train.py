@@ -138,13 +138,17 @@ def main():
     except KeyboardInterrupt:
         print('\n')
         console.warning('Graceful Shutdown')
+        return 1
     except RuntimeError:
         raise
     finally:
         if torch.cuda.is_available():
             gpu_mem = torch.cuda.max_memory_allocated() / 1024 ** 3
             console.info(f'Max GPU memory used = {gpu_mem:.2f} GB\n')
-
+        else:
+            console.info('No GPU memory usage statistics available (CUDA is not available)\n')
+    import os
+    os._exit(0)
 
 if __name__ == '__main__':
     main()
