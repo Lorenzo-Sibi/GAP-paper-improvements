@@ -67,6 +67,8 @@ class GAPLearnable(NodeClassification):
         except (ValueError, IndexError):
             console.warning(f'Invalid weight range "{agg_weight_range}", using default (0,1)')
             weight_range = (0.0, 1.0)
+        finally:
+            self.weight_range = weight_range
 
         # Encoder module (unchanged from original GAP)
         self._encoder = EncoderModule(
