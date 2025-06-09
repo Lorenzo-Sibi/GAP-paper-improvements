@@ -2,6 +2,7 @@
 
 import torch
 import torch.nn.functional as F
+from torch.nn import LazyLinear
 from torch import Tensor
 from torch_sparse import SparseTensor
 from torch_geometric.data import Data
@@ -31,6 +32,7 @@ class LearnableClassificationModule(MLPNodeClassifier):
                  # Parametri per aggregazione learnable
                  learnable_agg_layers: Optional[List[LearnableAggregation]] = None,
                  use_learnable_agg: bool = True,
+                 include_lazy_linear: bool = False,
                  ):
 
         super().__init__(num_classes=num_classes)  # Dummy initialization
@@ -40,6 +42,9 @@ class LearnableClassificationModule(MLPNodeClassifier):
         self.use_learnable_agg = use_learnable_agg
         self.learnable_agg_layers = learnable_agg_layers or []
         
+        if include_lazy_linear:
+            self.dummy_encoder = LazyLinear(hidden_dim)
+
         # MultiMLP che combina le rappresentazioni multi-hop
         self.model = MultiMLP(
             num_channels=hops + 1,  # +1 per le features originali (0-hop)
@@ -83,6 +88,8 @@ class LearnableClassificationModule(MLPNodeClassifier):
         Forward pass che calcola aggregazioni e classificazione in un colpo solo.
         """
         # Calcola aggregazioni multi-hop al volo
+        if hasattr(self, 'dummy_encoder'):
+            x = self.dummy_encoder(x)
         multi_hop_features = self._compute_aggregations_on_the_fly(x, adj_t)
         
         # Applica MultiMLP per la classificazione

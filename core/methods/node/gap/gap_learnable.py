@@ -2,10 +2,10 @@
 
 import torch
 from typing import Annotated, Iterable, Optional
+from torch.nn import LazyLinear
 import torch.nn.functional as F
 from torch.optim import Adam, SGD, Optimizer
 from torch_geometric.data import Data
-from torch_sparse import SparseTensor, matmul
 from core import console
 from core.args.utils import ArgInfo
 from core.methods.node.base import NodeClassification
@@ -127,6 +127,7 @@ class GAPLearnable(NodeClassification):
             batch_norm=batch_norm,
             learnable_agg_layers=learnable_agg_layers,
             use_learnable_agg=use_learnable_agg,
+            include_lazy_linear=encoder_layers == 0
         )
 
     @property
@@ -143,9 +144,6 @@ class GAPLearnable(NodeClassification):
         # Pre-train encoder (same as original GAP)
         if self.encoder_layers > 0:
             self.data = self.pretrain_encoder(self.data, prefix=prefix)
-
-        # IMPORTANTE: Non pre-calcolare più le aggregazioni!
-        # Il classifier le calcolerà al volo durante il forward pass
         
         # Train classifier
         return super().fit(self.data, prefix=prefix)
