@@ -31,7 +31,6 @@ class LearnableClassificationModule(MLPNodeClassifier):
                  batch_norm: bool = False,
                  # Parametri per aggregazione learnable
                  learnable_agg_layers: Optional[List[LearnableAggregation]] = None,
-                 use_learnable_agg: bool = True,
                  include_lazy_linear: bool = False,
                  ):
 
@@ -39,7 +38,6 @@ class LearnableClassificationModule(MLPNodeClassifier):
 
         self.hops = hops
         self.hidden_dim = hidden_dim
-        self.use_learnable_agg = use_learnable_agg
         self.learnable_agg_layers = learnable_agg_layers or []
         
         if include_lazy_linear:
@@ -69,20 +67,19 @@ class LearnableClassificationModule(MLPNodeClassifier):
         
         current_x = x
         for hop_idx in range(self.hops):
-            if self.use_learnable_agg and hop_idx < len(self.learnable_agg_layers):
-                # Aggregazione learnable - i gradienti fluiscono!
-                current_x = self.learnable_agg_layers[hop_idx](current_x, adj_t)
-            else:
-                # Aggregazione standard come fallback
-                from torch_sparse import matmul
-                current_x = matmul(adj_t, current_x)
-                current_x = F.normalize(current_x, p=2, dim=-1)
+            current_x = self.learnable_agg_layers[hop_idx](current_x, adj_t)
             
             x_list.append(current_x)
         
         # Stack per MultiMLP: [N, D, hops+1]
         return torch.stack(x_list, dim=-1)
 
+    def _normalize(self, x: Tensor) -> Tensor:
+        """
+        Normalizza le features per evitare problemi di scala.
+        """
+        return F.normalize(x, p=2, dim=-1)
+    
     def forward(self, x: Tensor, adj_t: SparseTensor) -> Tensor:
         """
         Forward pass che calcola aggregazioni e classificazione in un colpo solo.
@@ -91,7 +88,7 @@ class LearnableClassificationModule(MLPNodeClassifier):
         if hasattr(self, 'dummy_encoder'):
             x = self.dummy_encoder(x)
         multi_hop_features = self._compute_aggregations_on_the_fly(x, adj_t)
-        
+        multi_hop_features = self._normalize(multi_hop_features)
         # Applica MultiMLP per la classificazione
         return self.model(multi_hop_features)
 
@@ -102,19 +99,20 @@ class LearnableClassificationModule(MLPNodeClassifier):
         mask = data[f'{stage}_mask']
         
         # Forward pass con aggregazioni al volo
-        output = self.forward(data.x, data.adj_t)
-        predictions = output[mask]
-        targets = data.y[mask]
-        
-        # Calcola accuracy
-        preds = F.log_softmax(predictions, dim=-1)
-        acc = preds.argmax(dim=1).eq(targets).float().mean() * 100
-        metrics = {'acc': acc}
+        with torch.cuda.amp.autocast():
+            output = self.forward(data.x, data.adj_t)
+            predictions = output[mask]
+            targets = data.y[mask]
+            
+            # Calcola accuracy
+            preds = F.log_softmax(predictions, dim=-1)
+            acc = preds.argmax(dim=1).eq(targets).float().mean() * 100
+            metrics = {'acc': acc}
 
-        loss = None
-        if stage != 'test':
-            loss = F.nll_loss(input=preds, target=targets)
-            metrics['loss'] = loss.detach()
+            loss = None
+            if stage != 'test':
+                loss = F.nll_loss(input=preds, target=targets)
+                metrics['loss'] = loss.detach()
 
         return loss, metrics
 

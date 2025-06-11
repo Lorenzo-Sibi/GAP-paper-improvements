@@ -3,6 +3,7 @@ from core.methods.node.gap.gap_inf import GAP
 from core.methods.node.gap.gap_edp import EdgePrivGAP
 from core.methods.node.gap.gap_edp_learn import EdgePrivGAPLearn
 from core.methods.node.gap.gap_ndp import NodePrivGAP
+from core.methods.node.gap.gap_ndp_learn import NodePrivGAPLearn
 from core.methods.node.gap.gap_learnable import GAPLearnable
 from core.methods.node.sage.sage_inf import SAGE
 from core.methods.node.sage.sage_edp import EdgePrivSAGE
@@ -16,6 +17,7 @@ supported_methods = {
     'gap-edp':  EdgePrivGAP,
     'gap-edp-learn': EdgePrivGAPLearn,
     'gap-ndp':  NodePrivGAP,
+    'gap-ndp-learn': NodePrivGAPLearn,
     'gap-learn': GAPLearnable,
     'sage-inf': SAGE,
     'sage-edp': EdgePrivSAGE,

@@ -6,11 +6,13 @@ from torch.nn import LazyLinear
 import torch.nn.functional as F
 from torch.optim import Adam, SGD, Optimizer
 from torch_geometric.data import Data
+from torch_sparse import SparseTensor
 from core import console
 from core.args.utils import ArgInfo
 from core.methods.node.base import NodeClassification
 from core.models.multi_mlp import MultiMLP
 from core.modules.base import Metrics
+from core.modules.node.cm import ClassificationModule
 from core.modules.node.em import EncoderModule
 from core.methods.node.gap.learnable_agg import LearnableAggregation
 from core.modules.node.cm_learnable import LearnableClassificationModule
@@ -39,9 +41,8 @@ class GAPLearnable(NodeClassification):
                  encoder_epochs: Annotated[int, ArgInfo(help='number of epochs for encoder pre-training (ignored if encoder_layers=0)')] = 100,
                  
                  # New parameters for learnable aggregation
-                 use_learnable_agg: Annotated[bool, ArgInfo(help='whether to use learnable aggregation')] = True,
                  agg_function: Annotated[str, ArgInfo(help='type of learnable weight function', choices=['mlp', 'attention'])] = 'mlp',
-                 agg_hidden_dim: Annotated[int, ArgInfo(help='hidden dimension for aggregation function')] = 16,
+                 agg_hidden_dim: Annotated[int, ArgInfo(help='hidden dimension for aggregation function')] = 64,
                  agg_layers: Annotated[int, ArgInfo(help='number of layers in aggregation function (for MLP)')] = 3,
                  agg_weight_range: Annotated[str, ArgInfo(help='weight range as "a,b" (e.g., "0,1")')] = "0,1",
                  **kwargs: Annotated[dict, ArgInfo(help='extra options passed to base class', bases=[NodeClassification])]
@@ -56,7 +57,6 @@ class GAPLearnable(NodeClassification):
         self.hops = hops
         self.encoder_layers = encoder_layers
         self.encoder_epochs = encoder_epochs
-        self.use_learnable_agg = use_learnable_agg
         self.agg_function = agg_function
         activation_fn = self.supported_activations[activation]
         
@@ -84,37 +84,35 @@ class GAPLearnable(NodeClassification):
 
         # Initialize learnable aggregation layers for each hop
         learnable_agg_layers = None
-        if self.use_learnable_agg:
-            # Prepare weight function kwargs based on function type
-            weight_function_kwargs = {}
-            
-            if agg_function == 'mlp':
-                weight_function_kwargs.update({
-                    'hidden_dim': agg_hidden_dim,
-                    'num_layers': agg_layers,
-                    'activation_fn': activation_fn,
-                    'dropout': dropout,
-                    'batch_norm': batch_norm
-                })
-            elif agg_function == 'attention':
-                weight_function_kwargs.update({
-                    'attention_dim': agg_hidden_dim,
-                    'num_heads': max(1, agg_hidden_dim // 16)
-                })
-            
-            learnable_agg_layers = torch.nn.ModuleList([
-                LearnableAggregation(
-                    input_dim=hidden_dim,
-                    weight_function=agg_function,
-                    weight_range=weight_range,
-                    use_efficient_computation=True,
-                    **weight_function_kwargs
-                ) for _ in range(hops)
-            ])
-            
-            console.info(f'Using learnable aggregation: {agg_function} with weight range {weight_range}')
-
-        # Classifier module che gestisce aggregazioni al volo
+        # Prepare weight function kwargs based on function type
+        weight_function_kwargs = {}
+        
+        if agg_function == 'mlp':
+            weight_function_kwargs.update({
+                'hidden_dim': agg_hidden_dim,
+                'num_layers': agg_layers,
+                'activation_fn': activation_fn,
+                'dropout': dropout,
+                'batch_norm': batch_norm
+            })
+        elif agg_function == 'attention':
+            weight_function_kwargs.update({
+                'attention_dim': agg_hidden_dim,
+                'num_heads': max(1, agg_hidden_dim // 16)
+            })
+        
+        learnable_agg_layers = torch.nn.ModuleList([
+            LearnableAggregation(
+                input_dim=hidden_dim,
+                weight_function=agg_function,
+                weight_range=weight_range,
+                use_efficient_computation=True,
+                **weight_function_kwargs
+            ) for _ in range(hops)
+        ])
+        
+        console.info(f'Using learnable aggregation: {agg_function} with weight range {weight_range}')
+        
         self._classifier = LearnableClassificationModule(
             num_classes=num_classes,
             hops=hops,
@@ -126,7 +124,6 @@ class GAPLearnable(NodeClassification):
             dropout=dropout,
             batch_norm=batch_norm,
             learnable_agg_layers=learnable_agg_layers,
-            use_learnable_agg=use_learnable_agg,
             include_lazy_linear=encoder_layers == 0
         )
 
@@ -185,26 +182,21 @@ class GAPLearnable(NodeClassification):
         data.x = self._encoder.predict(data)
         return data
 
+    def _normalize(self, x: torch.Tensor) -> torch.Tensor:
+        return F.normalize(x, p=2, dim=-1)
+    
     def configure_encoder_optimizer(self) -> Optimizer:
         """Configure optimizer for encoder training"""
         Optim = {'sgd': SGD, 'adam': Adam}[self.optimizer_name]
-        params = list(self._encoder.parameters())
-        
-        # Add learnable aggregation parameters to encoder optimizer
-        if self.use_learnable_agg and self._classifier.learnable_agg_layers:
-            for layer in self._classifier.learnable_agg_layers:
-                params.extend(layer.parameters())
-        
+        params = list(self._encoder.parameters())        
         return Optim(params, lr=self.learning_rate, weight_decay=self.weight_decay)
 
     def configure_optimizer(self) -> Optimizer:
         """Configure optimizer for classifier training"""
         Optim = {'sgd': SGD, 'adam': Adam}[self.optimizer_name]
         params = list(self._classifier.parameters())
-        
-        # Include learnable aggregation parameters if encoder wasn't pre-trained
-        if self.use_learnable_agg and self.encoder_epochs == 0 and self._classifier.learnable_agg_layers:
-            for layer in self._classifier.learnable_agg_layers:
-                params.extend(layer.parameters())
+
+        for layer in self._classifier.learnable_agg_layers:
+            params.extend(layer.parameters())
         
         return Optim(params, lr=self.learning_rate, weight_decay=self.weight_decay)
