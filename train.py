@@ -1,4 +1,5 @@
 from core import console
+from core.loggers.csv import CSVLogger
 with console.status('importing modules'):
     import torch
     import numpy as np
@@ -100,6 +101,10 @@ def run(seed:    Annotated[int,   ArgInfo(help='initial random seed')] = 12345,
             table_summary.add_row(display_name, mean, std, ci)
 
     console.info(table_summary)
+
+    if isinstance(logger, CSVLogger):
+        print('Saving results to CSV...')
+        logger.finish()
 
 
 def main():
